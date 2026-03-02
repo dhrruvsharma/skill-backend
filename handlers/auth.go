@@ -99,6 +99,7 @@ func Signup(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{
 		"success": true,
 		"message": "account created — please verify your email with the OTP sent to " + user.Email,
+		"data":    true,
 	})
 }
 
@@ -245,7 +246,7 @@ func ResendVerificationOTP(c *gin.Context) {
 		}
 	}()
 
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "new OTP sent"})
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "new OTP sent", "data": true})
 }
 
 func ForgotPassword(c *gin.Context) {
@@ -376,28 +377,60 @@ func RefreshAccessToken(c *gin.Context) {
 
 func GoogleLogin(c *gin.Context) {
 	cfg := googleOAuthConfig()
-	state := "state-token" // TODO: replace with a per-request random value stored in a cookie
-	url := cfg.AuthCodeURL(state, oauth2.AccessTypeOffline)
+
+	// Generate a cryptographically random state token
+	stateToken, err := utils.GenerateSecureToken(32)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "failed to generate state token"})
+		return
+	}
+
+	// Store it in a short-lived, HttpOnly, SameSite=Lax cookie
+	c.SetCookie(
+		"oauth_state",
+		stateToken,
+		int((10 * time.Minute).Seconds()), // 10 min — plenty for the OAuth round-trip
+		"/",
+		"",                                   // domain — leave empty to default to current host
+		os.Getenv("APP_ENV") == "production", // Secure flag: true in prod (HTTPS), false in dev
+		true,                                 // HttpOnly — not accessible via JS
+	)
+
+	url := cfg.AuthCodeURL(stateToken, oauth2.AccessTypeOffline)
 	c.Redirect(http.StatusTemporaryRedirect, url)
 }
 
 func GoogleCallback(c *gin.Context) {
+	// --- CSRF state validation ---
+	cookieState, err := c.Cookie("oauth_state")
+	if err != nil || cookieState == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "missing oauth state cookie"})
+		return
+	}
+
 	var req dto.GoogleCallbackRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
 		return
 	}
 
+	if req.State != cookieState {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid oauth state — possible CSRF attempt"})
+		return
+	}
+
+	// Consume the cookie immediately so it can't be reused
+	c.SetCookie("oauth_state", "", -1, "/", "", os.Getenv("APP_ENV") == "production", true)
+
+	// --- rest of the existing callback logic (unchanged) ---
 	cfg := googleOAuthConfig()
 
-	// Exchange auth code for Google OAuth token
 	gToken, err := cfg.Exchange(context.Background(), req.Code)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "failed to exchange auth code with Google"})
 		return
 	}
 
-	// Fetch the user's profile from Google
 	client := cfg.Client(context.Background(), gToken)
 	resp, err := client.Get("https://www.googleapis.com/oauth2/v3/userinfo")
 	if err != nil || resp.StatusCode != http.StatusOK {
@@ -416,10 +449,8 @@ func GoogleCallback(c *gin.Context) {
 	db := database.DB
 	var user models.User
 
-	// Upsert: find by provider + provider_id, or fall back to email
 	err = db.Where("provider = ? AND provider_id = ?", models.ProviderGoogle, gUser.Sub).First(&user).Error
 	if err != nil {
-		// New Google user — check if the email already exists under local auth
 		err = db.Where("email = ?", gUser.Email).First(&user).Error
 		if err == nil && user.Provider != models.ProviderGoogle {
 			c.JSON(http.StatusConflict, gin.H{
@@ -429,7 +460,6 @@ func GoogleCallback(c *gin.Context) {
 			return
 		}
 
-		// Create a brand new user
 		user = models.User{
 			FirstName:  gUser.FirstName,
 			LastName:   gUser.LastName,
@@ -437,7 +467,7 @@ func GoogleCallback(c *gin.Context) {
 			Provider:   models.ProviderGoogle,
 			ProviderID: gUser.Sub,
 			Role:       models.RoleUser,
-			IsVerified: true, // Google already verified the email
+			IsVerified: true,
 			IsActive:   true,
 		}
 		if err := db.Create(&user).Error; err != nil {
