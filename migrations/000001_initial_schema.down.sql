@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS interview_sessions;
+DROP TABLE IF EXISTS personas;
+DROP TABLE IF EXISTS users;

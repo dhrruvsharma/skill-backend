@@ -5,22 +5,24 @@ import (
 	"log"
 	"os"
 
-	"github.com/dhrruvsharma/skill-charge-backend/models"
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database/cockroachdb"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+
+	pg "gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 var DB *gorm.DB
 
 func Connect() {
-	dsn := fmt.Sprintf(
-		os.Getenv("DATABASE_URL"),
-	)
+	dsn := os.Getenv("DATABASE_URL")
 
 	var err error
-	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
+	DB, err = gorm.Open(pg.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Info),
 	})
 	if err != nil {
@@ -28,19 +30,33 @@ func Connect() {
 	}
 
 	log.Println("database connected successfully")
-	migrate()
 }
 
-func migrate() {
-	err := DB.AutoMigrate(
-		&models.User{},
-		&models.Persona{},
-		&models.InterviewSession{},
+func RunMigrations(migrationsPath string) {
+	sqlDB, err := DB.DB()
+	if err != nil {
+		log.Fatalf("failed to get sql.DB: %v", err)
+	}
+
+	driver, err := cockroachdb.WithInstance(sqlDB, &cockroachdb.Config{}) // ← changed
+	if err != nil {
+		log.Fatalf("failed to create migrate driver: %v", err)
+	}
+
+	m, err := migrate.NewWithDatabaseInstance(
+		fmt.Sprintf("file://%s", migrationsPath),
+		"cockroachdb", // ← changed
+		driver,
 	)
 	if err != nil {
-		log.Fatalf("auto migration failed: %v", err)
+		log.Fatalf("failed to create migrate instance: %v", err)
 	}
-	log.Println("database migration complete")
+
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		log.Fatalf("migration failed: %v", err)
+	}
+
+	log.Println("migrations applied successfully")
 }
 
 func GetDB() *gorm.DB {

@@ -40,6 +40,8 @@ var exemptRoutes = map[string]struct{}{
 	"/api/v1/auth/forgot-password":     {},
 	"/api/v1/auth/reset-password":      {},
 	"/api/v1/auth/refresh":             {}, // uses refresh token, not access token
+	"/api/v1/auth/google":              {},
+	"/api/v1/auth/google/callback":     {},
 }
 
 func isExempt(path string) bool {

@@ -3,11 +3,12 @@ package routes
 import (
 	"github.com/dhrruvsharma/skill-charge-backend/handlers"
 	"github.com/dhrruvsharma/skill-charge-backend/middleware"
+	"gorm.io/gorm"
 
 	"github.com/gin-gonic/gin"
 )
 
-func Register(r *gin.Engine) {
+func Register(r *gin.Engine, db *gorm.DB) {
 	api := r.Group("/api/v1")
 
 	api.Use(middleware.Authenticate())
@@ -28,4 +29,12 @@ func Register(r *gin.Engine) {
 		auth.POST("/google/callback", handlers.GoogleCallback) // receives code from frontend
 	}
 
+	personas := api.Group("/personas")
+	{
+		personas.POST("", handlers.CreatePersona(db))
+		personas.GET("", handlers.ListPersonas(db))
+		personas.GET("/:id", handlers.GetPersona(db))
+		personas.PATCH("/:id", handlers.UpdatePersona(db))
+		personas.DELETE("/:id", handlers.DeletePersona(db))
+	}
 }

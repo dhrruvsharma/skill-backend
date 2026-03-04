@@ -45,7 +45,6 @@ type Persona struct {
 
 	// Role & Domain
 	TargetRole      string          `gorm:"type:varchar(150)"                 json:"target_role"`      // e.g. "Software Engineer"
-	TargetCompany   string          `gorm:"type:varchar(150)"                 json:"target_company"`   // e.g. "Google" (optional)
 	ExperienceYears int             `gorm:"default:0"                         json:"experience_years"` // years of experience the persona assumes
 	Domain          InterviewDomain `gorm:"type:varchar(100);default:'general'" json:"domain"`
 	Difficulty      DifficultyLevel `gorm:"type:varchar(50);default:'medium'"   json:"difficulty"`

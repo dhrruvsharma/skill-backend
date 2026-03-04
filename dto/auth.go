@@ -52,6 +52,5 @@ type RefreshTokenRequest struct {
 
 // In dto/auth.go
 type GoogleCallbackRequest struct {
-	Code  string `json:"code"  binding:"required"`
-	State string `json:"state" binding:"required"`
+	Code string `json:"code"  binding:"required"`
 }

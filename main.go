@@ -1,25 +1,43 @@
 package main
 
 import (
+	"flag"
 	"log"
 	"os"
 
 	"github.com/dhrruvsharma/skill-charge-backend/database"
 	"github.com/dhrruvsharma/skill-charge-backend/routes"
+	"github.com/gin-contrib/cors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
 
 func main() {
+	migrate := flag.Bool("migrate", false, "run database migrations and exit")
+	flag.Parse()
+
 	if err := godotenv.Load(); err != nil {
 		log.Println("[INFO] no .env file found, relying on environment variables")
 	}
 
 	database.Connect()
+	db := database.GetDB()
+
+	if *migrate {
+		database.RunMigrations("./migrations")
+		log.Println("migrations complete, exiting")
+		return
+	}
 
 	r := gin.Default()
-	routes.Register(r)
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+		AllowHeaders:     []string{"Content-Type", "Authorization"},
+		AllowCredentials: true,
+	}))
+	routes.Register(r, db)
 
 	port := os.Getenv("PORT")
 	if port == "" {

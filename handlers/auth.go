@@ -401,28 +401,12 @@ func GoogleLogin(c *gin.Context) {
 }
 
 func GoogleCallback(c *gin.Context) {
-	// --- CSRF state validation ---
-	cookieState, err := c.Cookie("oauth_state")
-	if err != nil || cookieState == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "missing oauth state cookie"})
-		return
-	}
-
 	var req dto.GoogleCallbackRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
 		return
 	}
 
-	if req.State != cookieState {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid oauth state — possible CSRF attempt"})
-		return
-	}
-
-	// Consume the cookie immediately so it can't be reused
-	c.SetCookie("oauth_state", "", -1, "/", "", os.Getenv("APP_ENV") == "production", true)
-
-	// --- rest of the existing callback logic (unchanged) ---
 	cfg := googleOAuthConfig()
 
 	gToken, err := cfg.Exchange(context.Background(), req.Code)
