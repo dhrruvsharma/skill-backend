@@ -7,6 +7,7 @@ import (
 
 	"github.com/dhrruvsharma/skill-charge-backend/database"
 	"github.com/dhrruvsharma/skill-charge-backend/routes"
+	"github.com/dhrruvsharma/skill-charge-backend/services"
 	"github.com/gin-contrib/cors"
 
 	"github.com/gin-gonic/gin"
@@ -23,6 +24,7 @@ func main() {
 
 	database.Connect()
 	db := database.GetDB()
+	deepseekSvc := services.NewDeepseekService(os.Getenv("DEEPSEEK_API_KEY"))
 
 	if *migrate {
 		database.RunMigrations("./migrations")
@@ -37,7 +39,7 @@ func main() {
 		AllowHeaders:     []string{"Content-Type", "Authorization"},
 		AllowCredentials: true,
 	}))
-	routes.Register(r, db)
+	routes.Register(r, db, deepseekSvc)
 
 	port := os.Getenv("PORT")
 	if port == "" {

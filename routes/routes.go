@@ -3,12 +3,13 @@ package routes
 import (
 	"github.com/dhrruvsharma/skill-charge-backend/handlers"
 	"github.com/dhrruvsharma/skill-charge-backend/middleware"
+	"github.com/dhrruvsharma/skill-charge-backend/services"
 	"gorm.io/gorm"
 
 	"github.com/gin-gonic/gin"
 )
 
-func Register(r *gin.Engine, db *gorm.DB) {
+func Register(r *gin.Engine, db *gorm.DB, deepseekSvc *services.DeepseekService) {
 	api := r.Group("/api/v1")
 
 	api.Use(middleware.Authenticate())
@@ -36,5 +37,16 @@ func Register(r *gin.Engine, db *gorm.DB) {
 		personas.GET("/:id", handlers.GetPersona(db))
 		personas.PATCH("/:id", handlers.UpdatePersona(db))
 		personas.DELETE("/:id", handlers.DeletePersona(db))
+	}
+
+	sessions := api.Group("/sessions")
+	{
+		sessions.POST("", handlers.StartSession(db, deepseekSvc))
+		sessions.GET("", handlers.GetUserSessions(db))
+		sessions.GET("/:id", handlers.GetSession(db))
+		sessions.PATCH("/:id/end", handlers.EndSession(db, deepseekSvc))
+
+		sessions.GET("/:id/messages", handlers.GetHistory(db))
+		sessions.POST("/:id/messages", handlers.SendMessage(db, deepseekSvc))
 	}
 }

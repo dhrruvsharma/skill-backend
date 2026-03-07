@@ -94,7 +94,9 @@ type InterviewSession struct {
 	CheatingFlags   datatypes.JSON `gorm:"type:jsonb"    json:"cheating_flags"` // detailed log of flagged events [{type, timestamp, detail}]
 
 	// Recording
-	RecordingURL string `gorm:"type:text" json:"recording_url,omitempty"` // S3/MinIO URL
+	RecordingURL string             `gorm:"type:text" json:"recording_url,omitempty"` // S3/MinIO URL
+	Status       SessionStatus      `gorm:"type:varchar(50);default:'pending';not null;index" json:"status"`
+	Messages     []InterviewMessage `gorm:"foreignKey:SessionID;constraint:OnDelete:CASCADE"  json:"messages,omitempty"`
 }
 
 func (p *Persona) BeforeCreate(tx *gorm.DB) error {
