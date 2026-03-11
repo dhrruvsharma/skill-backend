@@ -25,6 +25,7 @@ func main() {
 	database.Connect()
 	db := database.GetDB()
 	deepseekSvc := services.NewDeepseekService(os.Getenv("DEEPSEEK_API_KEY"))
+	voiceSvc := services.NewVoiceService(os.Getenv("ELEVENLABS_API_KEY"), os.Getenv("ELEVENLABS_VOICE_ID"))
 
 	if *migrate {
 		database.RunMigrations("./migrations")
@@ -39,7 +40,7 @@ func main() {
 		AllowHeaders:     []string{"Content-Type", "Authorization"},
 		AllowCredentials: true,
 	}))
-	routes.Register(r, db, deepseekSvc)
+	routes.Register(r, db, deepseekSvc, voiceSvc)
 
 	port := os.Getenv("PORT")
 	if port == "" {
