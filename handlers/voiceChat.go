@@ -134,7 +134,8 @@ func VoiceChat(db *gorm.DB, deepseekSvc *services.DeepseekService, voiceSvc *ser
 		//
 		// For simplicity, synthesize and stream audio bytes as a final SSE event
 		// encoded in base64. For production, upload to S3 and send a URL instead.
-		audioStream, err := voiceSvc.SynthesizeStream(ctx, fullText)
+		ttsText := stripMarkdown(fullText)
+		audioStream, err := voiceSvc.SynthesizeStream(ctx, ttsText)
 		if err != nil {
 			writeSSE("error", "tts failed: "+err.Error())
 			return
