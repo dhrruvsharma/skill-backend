@@ -2,11 +2,13 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 
 	"github.com/dhrruvsharma/skill-charge-backend/models"
@@ -317,6 +319,50 @@ func (s *InterviewService) resolveSystemPrompt(persona *models.Persona) string {
 Conduct a structured interview by asking one clear question at a time.
 Evaluate answers on correctness, clarity, and depth.
 Be encouraging but objective. After each answer, provide brief feedback before moving to the next question.`
+}
+
+// UpdateSessionRecording saves the video path and face-detection result on the
+// session. If multiple faces were found it also appends a cheating_flags event.
+func (s *InterviewService) UpdateSessionRecording(
+	ctx context.Context,
+	sessionID uuid.UUID,
+	userID uuid.UUID,
+	recordingPath string,
+	multipleFaces bool,
+	maxFaces int,
+) error {
+	session, err := s.getOwnedSession(ctx, sessionID, userID)
+	if err != nil {
+		return err
+	}
+
+	updates := map[string]interface{}{
+		"recording_url":  recordingPath,
+		"multiple_faces": multipleFaces,
+	}
+
+	if multipleFaces {
+		type flagEvent struct {
+			Type      string    `json:"type"`
+			Timestamp time.Time `json:"timestamp"`
+			Detail    string    `json:"detail"`
+		}
+		var existing []flagEvent
+		if len(session.CheatingFlags) > 0 {
+			_ = json.Unmarshal(session.CheatingFlags, &existing)
+		}
+		existing = append(existing, flagEvent{
+			Type:      "multiple_faces",
+			Timestamp: time.Now().UTC(),
+			Detail:    fmt.Sprintf("maximum %d faces detected in video", maxFaces),
+		})
+		flagsJSON, err := json.Marshal(existing)
+		if err == nil {
+			updates["cheating_flags"] = datatypes.JSON(flagsJSON)
+		}
+	}
+
+	return s.db.WithContext(ctx).Model(session).Updates(updates).Error
 }
 
 func (s *InterviewService) GetUserSessions(

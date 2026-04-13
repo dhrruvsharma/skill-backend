@@ -9,7 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func Register(r *gin.Engine, db *gorm.DB, deepseekSvc *services.DeepseekService, voiceSvc *services.VoiceService) {
+func Register(r *gin.Engine, db *gorm.DB, deepseekSvc *services.DeepseekService, voiceSvc *services.VoiceService, videoSvc *services.VideoService) {
 	api := r.Group("/api/v1")
 
 	api.Use(middleware.Authenticate())
@@ -49,5 +49,6 @@ func Register(r *gin.Engine, db *gorm.DB, deepseekSvc *services.DeepseekService,
 		sessions.GET("/:id/messages", handlers.GetHistory(db))
 		sessions.POST("/:id/messages", handlers.SendMessage(db, deepseekSvc))
 		sessions.POST("/:id/voice", handlers.VoiceChat(db, deepseekSvc, voiceSvc))
+		sessions.POST("/:id/video", handlers.VideoChat(db, deepseekSvc, voiceSvc, videoSvc))
 	}
 }

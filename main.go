@@ -27,6 +27,15 @@ func main() {
 	deepseekSvc := services.NewDeepseekService(os.Getenv("DEEPSEEK_API_KEY"))
 	voiceSvc := services.NewVoiceService(os.Getenv("ELEVENLABS_API_KEY"), os.Getenv("ELEVENLABS_VOICE_ID"))
 
+	videoStoragePath := os.Getenv("VIDEO_STORAGE_PATH")
+	if videoStoragePath == "" {
+		videoStoragePath = "./recordings"
+	}
+	videoSvc, err := services.NewVideoService(videoStoragePath, voiceSvc)
+	if err != nil {
+		log.Fatalf("failed to init video service: %v", err)
+	}
+
 	if *migrate {
 		database.RunMigrations("./migrations")
 		log.Println("migrations complete, exiting")
@@ -40,7 +49,7 @@ func main() {
 		AllowHeaders:     []string{"Content-Type", "Authorization"},
 		AllowCredentials: true,
 	}))
-	routes.Register(r, db, deepseekSvc, voiceSvc)
+	routes.Register(r, db, deepseekSvc, voiceSvc, videoSvc)
 
 	port := os.Getenv("PORT")
 	if port == "" {
