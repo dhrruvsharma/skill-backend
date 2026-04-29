@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -92,6 +93,41 @@ func (s *InterviewService) StartSession(
 		}
 		if err := s.db.WithContext(ctx).Create(msg).Error; err != nil {
 			return nil, fmt.Errorf("start session: create system message: %w", err)
+		}
+	}
+
+	// Generate AI greeting message (best-effort — don't fail session creation)
+	if s.deepseek != nil {
+		aiMessages := []AIMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: "[SESSION_START] The candidate has just joined the interview. Introduce yourself briefly based on the persona/role context and ask your first question."},
+		}
+		ch, err := s.deepseek.StreamChat(ctx, aiMessages)
+		if err == nil {
+			var greeting strings.Builder
+			var promptTokens, completionTokens int
+			for chunk := range ch {
+				if chunk.Err != nil {
+					break
+				}
+				if chunk.Done {
+					promptTokens = chunk.PromptTokens
+					completionTokens = chunk.CompletionTokens
+					break
+				}
+				greeting.WriteString(chunk.Content)
+			}
+			if greeting.Len() > 0 {
+				greetingMsg := &models.InterviewMessage{
+					SessionID:        session.ID,
+					Role:             models.MessageRoleAssistant,
+					Content:          greeting.String(),
+					SequenceNum:      1,
+					PromptTokens:     promptTokens,
+					CompletionTokens: completionTokens,
+				}
+				_ = s.db.WithContext(ctx).Create(greetingMsg).Error
+			}
 		}
 	}
 
@@ -311,14 +347,21 @@ func (s *InterviewService) buildAIMessages(
 }
 
 func (s *InterviewService) resolveSystemPrompt(persona *models.Persona) string {
-	if persona != nil && persona.SystemPrompt != "" {
-		return persona.SystemPrompt
-	}
-	// Generic fallback prompt when no persona is configured
-	return `You are a professional technical interviewer. 
+	base := `You are a professional technical interviewer.
 Conduct a structured interview by asking one clear question at a time.
 Evaluate answers on correctness, clarity, and depth.
 Be encouraging but objective. After each answer, provide brief feedback before moving to the next question.`
+
+	if persona != nil && persona.SystemPrompt != "" {
+		base = persona.SystemPrompt
+	}
+
+	// Append the interview-end instruction to every system prompt
+	base += `
+
+IMPORTANT: When you have asked enough questions (typically 5-8 questions) and gathered sufficient information to evaluate the candidate, you MUST end the interview. To do so, provide a natural closing statement thanking the candidate, and then include the exact marker [END_INTERVIEW] at the very end of your message. Do NOT include this marker until you are ready to conclude the interview. The marker must appear on its own line at the end.`
+
+	return base
 }
 
 // UpdateSessionRecording saves the video path and face-detection result on the
@@ -363,6 +406,129 @@ func (s *InterviewService) UpdateSessionRecording(
 	}
 
 	return s.db.WithContext(ctx).Model(session).Updates(updates).Error
+}
+
+// GenerateReport creates an AI-generated interview report based on the full
+// conversation transcript and proctoring data. Saves it to session.AIReport.
+func (s *InterviewService) GenerateReport(
+	ctx context.Context,
+	sessionID uuid.UUID,
+	userID uuid.UUID,
+) (string, error) {
+
+	session, err := s.getOwnedSession(ctx, sessionID, userID)
+	if err != nil {
+		return "", err
+	}
+
+	// Build transcript text
+	msgs, err := s.GetHistory(ctx, sessionID, userID)
+	if err != nil {
+		return "", err
+	}
+
+	var transcriptBuilder strings.Builder
+	for _, m := range msgs {
+		if m.Role == models.MessageRoleSystem {
+			continue
+		}
+		role := "Candidate"
+		if m.Role == models.MessageRoleAssistant {
+			role = "Interviewer"
+		}
+		transcriptBuilder.WriteString(fmt.Sprintf("[%s]: %s\n\n", role, m.Content))
+	}
+
+	// Build proctoring summary
+	var proctoringInfo strings.Builder
+	proctoringInfo.WriteString(fmt.Sprintf("- Multiple faces detected: %v\n", session.MultipleFaces))
+	proctoringInfo.WriteString(fmt.Sprintf("- Tab switches: %d\n", session.TabSwitchCount))
+	proctoringInfo.WriteString(fmt.Sprintf("- Suspicious audio: %v\n", session.SuspiciousAudio))
+	if len(session.CheatingFlags) > 0 {
+		proctoringInfo.WriteString(fmt.Sprintf("- Cheating flags: %s\n", string(session.CheatingFlags)))
+	}
+
+	reportPrompt := fmt.Sprintf(`You are an expert interview evaluator. Based on the following interview transcript, generate a detailed performance report.
+
+## Interview Transcript
+%s
+
+## Proctoring Data
+%s
+
+Generate a JSON report with this exact structure (no markdown code fences, just raw JSON):
+{
+  "overall_score": <number 1-10>,
+  "summary": "<2-3 sentence overall assessment>",
+  "strengths": ["<strength 1>", "<strength 2>", ...],
+  "weaknesses": ["<weakness 1>", "<weakness 2>", ...],
+  "detailed_feedback": "<paragraph with specific actionable advice>",
+  "question_scores": [
+    {"question": "<brief question topic>", "score": <1-10>, "feedback": "<one line>"}
+  ],
+  "proctoring": {
+    "multiple_faces_detected": <bool>,
+    "tab_switch_count": <number>,
+    "suspicious_audio": <bool>,
+    "integrity_note": "<one sentence about proctoring observations or 'No issues detected'>"
+  }
+}`, transcriptBuilder.String(), proctoringInfo.String())
+
+	aiMessages := []AIMessage{
+		{Role: "system", Content: "You are an interview performance evaluator. Return ONLY valid JSON, no explanations or code fences."},
+		{Role: "user", Content: reportPrompt},
+	}
+
+	ch, err := s.deepseek.StreamChat(ctx, aiMessages)
+	if err != nil {
+		return "", fmt.Errorf("generate report: deepseek: %w", err)
+	}
+
+	var reportBuilder strings.Builder
+	for chunk := range ch {
+		if chunk.Err != nil {
+			return "", fmt.Errorf("generate report: stream error: %w", chunk.Err)
+		}
+		if chunk.Done {
+			break
+		}
+		reportBuilder.WriteString(chunk.Content)
+	}
+
+	report := reportBuilder.String()
+
+	// Persist
+	if err := s.db.WithContext(ctx).Model(session).Update("ai_report", report).Error; err != nil {
+		return "", fmt.Errorf("generate report: save: %w", err)
+	}
+
+	return report, nil
+}
+
+// CompileTranscript creates a text transcript of the session (excluding system messages).
+func (s *InterviewService) CompileTranscript(
+	ctx context.Context,
+	sessionID uuid.UUID,
+	userID uuid.UUID,
+) (string, error) {
+	msgs, err := s.GetHistory(ctx, sessionID, userID)
+	if err != nil {
+		return "", err
+	}
+
+	var sb strings.Builder
+	for _, m := range msgs {
+		if m.Role == models.MessageRoleSystem {
+			continue
+		}
+		role := "User"
+		if m.Role == models.MessageRoleAssistant {
+			role = "AI"
+		}
+		sb.WriteString(fmt.Sprintf("[%s]: %s\n", role, m.Content))
+	}
+
+	return sb.String(), nil
 }
 
 func (s *InterviewService) GetUserSessions(

@@ -68,6 +68,12 @@ func EndSession(db *gorm.DB, deepseekSvc *services.DeepseekService) gin.HandlerF
 			return
 		}
 
+		// Generate report in the background — best effort
+		report, _ := svc.GenerateReport(c.Request.Context(), sessionID, userID)
+		if report != "" {
+			session.AIReport = report
+		}
+
 		c.JSON(http.StatusOK, gin.H{"success": true, "data": toSessionResponse(session)})
 	}
 }
@@ -235,8 +241,20 @@ func SendMessage(db *gorm.DB, deepseekSvc *services.DeepseekService) gin.Handler
 			})
 		}
 
+		fullText := sb.String()
+
+		// Check for AI-initiated interview end
+		writeSSE := func(eventType, payload string) {
+			fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, payload)
+			if canFlush {
+				flusher.Flush()
+			}
+		}
+		cleanedText, ended := checkAndHandleEndInterview(ctx, svc, sessionID, userID, fullText, writeSSE)
+		_ = ended
+
 		// Persist completed assistant message
-		assistantMsg, err := svc.FinalizeAssistantMessage(ctx, sessionID, sb.String(), promptTokens, completionTokens)
+		assistantMsg, err := svc.FinalizeAssistantMessage(ctx, sessionID, cleanedText, promptTokens, completionTokens)
 		if err != nil {
 			writeEvent(dto.SSEEvent{
 				Type:    dto.SSEEventTypeError,
@@ -249,6 +267,42 @@ func SendMessage(db *gorm.DB, deepseekSvc *services.DeepseekService) gin.Handler
 			Type:    dto.SSEEventTypeDone,
 			Payload: toMessageResponse(*assistantMsg),
 		})
+	}
+}
+
+// DeleteSession godoc
+// DELETE /api/v1/sessions/:id
+func DeleteSession(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID, ok := middleware.GetUserID(c)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthenticated"})
+			return
+		}
+
+		sessionID, err := uuid.Parse(c.Param("id"))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid session id"})
+			return
+		}
+
+		// Delete messages first, then session (soft-delete)
+		if err := db.Where("session_id = ?", sessionID).Delete(&models.InterviewMessage{}).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "failed to delete session messages"})
+			return
+		}
+
+		result := db.Where("id = ? AND user_id = ?", sessionID, userID).Delete(&models.InterviewSession{})
+		if result.Error != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "failed to delete session"})
+			return
+		}
+		if result.RowsAffected == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "session not found"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": "session deleted successfully"})
 	}
 }
 
@@ -293,15 +347,19 @@ func handleInterviewServiceError(c *gin.Context, err error) {
 
 func toSessionResponse(s *models.InterviewSession) dto.SessionResponse {
 	resp := dto.SessionResponse{
-		ID:           s.ID.String(),
-		UserID:       s.UserID.String(),
-		PersonaID:    dto.UUIDPtrToStringPtr(s.PersonaID),
-		Status:       string(s.Status),
-		StartedAt:    s.StartedAt,
-		EndedAt:      s.EndedAt,
-		DurationSecs: s.DurationSecs,
-		CreatedAt:    s.CreatedAt,
-		UpdatedAt:    s.UpdatedAt,
+		ID:              s.ID.String(),
+		UserID:          s.UserID.String(),
+		PersonaID:       dto.UUIDPtrToStringPtr(s.PersonaID),
+		Status:          string(s.Status),
+		StartedAt:       s.StartedAt,
+		EndedAt:         s.EndedAt,
+		DurationSecs:    s.DurationSecs,
+		AIReport:        s.AIReport,
+		MultipleFaces:   s.MultipleFaces,
+		TabSwitchCount:  s.TabSwitchCount,
+		SuspiciousAudio: s.SuspiciousAudio,
+		CreatedAt:       s.CreatedAt,
+		UpdatedAt:       s.UpdatedAt,
 	}
 	if s.Persona != nil {
 		resp.PersonaName = s.Persona.Name

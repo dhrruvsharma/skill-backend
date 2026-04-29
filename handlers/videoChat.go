@@ -150,13 +150,17 @@ func VideoChat(db *gorm.DB, deepseekSvc *services.DeepseekService, voiceSvc *ser
 
 		fullText := sb.String()
 
-		if _, err := svc.FinalizeAssistantMessage(ctx, sessionID, fullText, promptTokens, completionTokens); err != nil {
+		// Check for AI-initiated interview end
+		cleanedText, ended := checkAndHandleEndInterview(ctx, svc, sessionID, userID, fullText, writeSSE)
+		_ = ended
+
+		if _, err := svc.FinalizeAssistantMessage(ctx, sessionID, cleanedText, promptTokens, completionTokens); err != nil {
 			writeSSE("error", "failed to save assistant message")
 			return
 		}
 
 		// ── Step 7: TTS ──────────────────────────────────────────────────────
-		audioStream, err := voiceSvc.SynthesizeStream(ctx, stripMarkdown(fullText))
+		audioStream, err := voiceSvc.SynthesizeStream(ctx, stripMarkdown(cleanedText))
 		if err != nil {
 			writeSSE("error", "tts failed: "+err.Error())
 			return

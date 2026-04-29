@@ -44,6 +44,7 @@ func Register(r *gin.Engine, db *gorm.DB, deepseekSvc *services.DeepseekService,
 		sessions.POST("", handlers.StartSession(db, deepseekSvc))
 		sessions.GET("", handlers.GetUserSessions(db))
 		sessions.GET("/:id", handlers.GetSession(db))
+		sessions.DELETE("/:id", handlers.DeleteSession(db))
 		sessions.PATCH("/:id/end", handlers.EndSession(db, deepseekSvc))
 
 		sessions.GET("/:id/messages", handlers.GetHistory(db))

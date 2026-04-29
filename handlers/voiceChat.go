@@ -120,8 +120,12 @@ func VoiceChat(db *gorm.DB, deepseekSvc *services.DeepseekService, voiceSvc *ser
 
 		fullText := sb.String()
 
+		// Check for AI-initiated interview end
+		cleanedText, ended := checkAndHandleEndInterview(ctx, svc, sessionID, userID, fullText, writeSSE)
+		_ = ended
+
 		// Persist assistant message
-		assistantMsg, err := svc.FinalizeAssistantMessage(ctx, sessionID, fullText, promptTokens, completionTokens)
+		assistantMsg, err := svc.FinalizeAssistantMessage(ctx, sessionID, cleanedText, promptTokens, completionTokens)
 		if err != nil {
 			writeSSE("error", "failed to save assistant message")
 			return
@@ -134,7 +138,7 @@ func VoiceChat(db *gorm.DB, deepseekSvc *services.DeepseekService, voiceSvc *ser
 		//
 		// For simplicity, synthesize and stream audio bytes as a final SSE event
 		// encoded in base64. For production, upload to S3 and send a URL instead.
-		ttsText := stripMarkdown(fullText)
+		ttsText := stripMarkdown(cleanedText)
 		audioStream, err := voiceSvc.SynthesizeStream(ctx, ttsText)
 		if err != nil {
 			writeSSE("error", "tts failed: "+err.Error())

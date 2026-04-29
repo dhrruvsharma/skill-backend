@@ -27,6 +27,12 @@ type SessionResponse struct {
 	SystemPrompt string `json:"system_prompt,omitempty"`
 	DurationSecs int    `json:"duration_secs,omitempty"`
 
+	// Report & Proctoring
+	AIReport        string `json:"ai_report,omitempty"`
+	MultipleFaces   bool   `json:"multiple_faces"`
+	TabSwitchCount  int    `json:"tab_switch_count"`
+	SuspiciousAudio bool   `json:"suspicious_audio"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
